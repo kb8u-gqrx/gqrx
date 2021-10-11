@@ -42,6 +42,8 @@ RemoteControl::RemoteControl(QObject *parent) :
     rc_mode = 0;
     rc_passband_lo = 0;
     rc_passband_hi = 0;
+    rc_program_id = "0000";
+    rds_status = false;
     signal_level = -200.0;
     squelch_level = -150.0;
     audio_recorder_status = false;
@@ -54,7 +56,6 @@ RemoteControl::RemoteControl(QObject *parent) :
     rc_socket = 0;
 
     connect(&rc_server, SIGNAL(newConnection()), this, SLOT(acceptConnection()));
-
 }
 
 RemoteControl::~RemoteControl()
@@ -226,6 +227,10 @@ void RemoteControl::startRead()
         answer = cmd_get_split_vfo();
     else if (cmd == "S")
         answer = cmd_set_split_vfo();
+    else if (cmd == "p")
+        answer = cmd_get_param(cmdlist);
+    else if (cmd == "R")
+        answer = cmd_set_rds(cmdlist);
     else if (cmd == "_")
         answer = cmd_get_info();
     else if (cmd == "AOS")
@@ -383,6 +388,17 @@ bool RemoteControl::setGain(QString name, double gain)
     return false;
 }
 
+/*! \brief Set RDS program identification (from RDS parser). */
+void RemoteControl::rdsPI(QString program_id)
+{
+    rc_program_id = program_id;
+}
+
+/*! \brief Set RDS status (from RDS dock). */
+void RemoteControl::setRDSstatus(bool enabled)
+{
+    rds_status = enabled;
+}
 
 /*! \brief Convert mode string to enum (DockRxOpt::rxopt_mode_idx)
  *  \param mode The Hamlib rigctld compatible mode string
@@ -683,11 +699,13 @@ QString RemoteControl::cmd_get_func(QStringList cmdlist)
     QString func = cmdlist.value(1, "");
 
     if (func == "?")
-        answer = QString("RECORD DSP\n");
+        answer = QString("RECORD DSP RDS\n");
     else if (func.compare("RECORD", Qt::CaseInsensitive) == 0)
         answer = QString("%1\n").arg(audio_recorder_status);
     else if (func.compare("DSP", Qt::CaseInsensitive) == 0)
         answer = QString("%1\n").arg(receiver_running);
+    else if (func.compare("RDS", Qt::CaseInsensitive) == 0)
+        answer = QString("%1\n").arg(rds_status);
     else
         answer = QString("RPRT 1\n");
 
@@ -704,7 +722,7 @@ QString RemoteControl::cmd_set_func(QStringList cmdlist)
 
     if (func == "?")
     {
-        answer = QString("RECORD DSP\n");
+        answer = QString("RECORD DSP RDS\n");
     }
     else if ((func.compare("RECORD", Qt::CaseInsensitive) == 0) && ok)
     {
@@ -731,10 +749,43 @@ QString RemoteControl::cmd_set_func(QStringList cmdlist)
 
         answer = QString("RPRT 0\n");
     }
+    else if ((func.compare("RDS", Qt::CaseInsensitive) == 0) && ok)
+    {
+        bool value = (status == 0) ? false : true;
+        if (status == 1) {
+            emit newRDSmode(value);
+            answer = QString("RPRT 0\n");
+        }
+        else if (status == 0) {
+            emit newRDSmode(value);
+            rc_program_id = "0000";
+            answer = QString("RPRT 0\n");
+        }
+        else
+            answer = QString("RPRT 1\n");
+
+        return answer;
+    }
     else
     {
         answer = QString("RPRT 1\n");
     }
+
+    return answer;
+}
+
+/* Get parameter */
+QString RemoteControl::cmd_get_param(QStringList cmdlist)
+{
+    QString answer;
+    QString func = cmdlist.value(1, "");
+
+    if (func == "?")
+        answer = QString("RDS_PI\n");
+    else if (func.compare("RDS_PI", Qt::CaseInsensitive) == 0)
+        answer = QString("%1\n").arg(rc_program_id);
+    else
+        answer = QString("RPRT 1\n");
 
     return answer;
 }
@@ -771,6 +822,32 @@ QString RemoteControl::cmd_get_split_vfo() const
 QString RemoteControl::cmd_set_split_vfo()
 {
     return QString("RPRT 1\n");
+}
+
+/* Set the RDS decoder on or off */
+QString RemoteControl::cmd_set_rds(QStringList cmdlist)
+{
+    QString cmd_arg = cmdlist.value(1, "");
+    QString answer;
+    bool value;
+
+    if (cmd_arg.compare("1") == 0) {
+        value = true;
+        emit newRDSmode(value);
+        rds_status = true;
+        answer = QString("RPRT 0\n");
+    }
+    else if (cmd_arg.compare("0") == 0) {
+        value = false;
+        emit newRDSmode(value);
+        rds_status = false;
+        rc_program_id = "0000";
+        answer = QString("RPRT 0\n");
+    }
+    else
+        answer = QString("RPRT 1\n");
+
+    return answer;
 }
 
 /* Get info */
